@@ -1,0 +1,40 @@
+{
+  "name": "solana-shitcoin-hunter",
+  "version": "1.0.0",
+  "description": "Solana new coin scanner with Grok sentiment analysis and auto-trading",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "ts-node-dev --respawn src/index.ts",
+    "dev:pf:paper": "ts-node src/index.ts -- --scanner=pf --execution=paper",
+    "dev:pf:real": "ts-node src/index.ts -- --scanner=pf --execution=real",
+    "dev:grd:paper": "ts-node src/index.ts -- --scanner=grd --execution=paper",
+    "dev:grd:real": "ts-node src/index.ts -- --scanner=grd --execution=real"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.0",
+    "@jup-ag/api": "^6.0.29",
+    "@solana/spl-token": "^0.1.8",
+    "@solana/web3.js": "^1.91.8",
+    "axios": "^1.6.8",
+    "bn.js": "^5.2.1",
+    "bs58": "^5.0.0",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.67.0",
+    "redis": "^4.6.13",
+    "winston": "^3.13.0",
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@types/node-cron": "^3.0.11",
+    "@types/node-telegram-bot-api": "^0.64.7",
+    "@types/ws": "^8.5.10",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.5"
+  }
+}

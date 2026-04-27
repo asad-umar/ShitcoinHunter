@@ -1,0 +1,11 @@
+[2026-04-15 00:35:17] error: [PF-WS] WebSocket error {"error":"Unexpected server response: 530"}
+[2026-04-15 00:35:20] error: [PF-WS] WebSocket error {"error":"Unexpected server response: 530"}
+[2026-04-15 00:35:26] error: [PF-WS] WebSocket error {"error":"Unexpected server response: 530"}
+[2026-04-15 18:06:00] error: Telegram send failed {"error":"ETELEGRAM: 400 Bad Request: can't parse entities: Unsupported start tag \"?\" at byte offset 165"}
+[2026-04-16 13:00:51] error: Telegram send failed {"error":"EFATAL: Error: read ECONNRESET"}
+[2026-04-19 21:34:45] error: Telegram send failed {"error":"EFATAL: Error: read ECONNRESET"}
+[2026-04-22 18:36:25] error: [GrokAgent] Batch call failed {"error":"timeout of 30000ms exceeded"}
+[2026-04-23 17:34:19] error: [GRD] PumpPortal WS error {"error":"getaddrinfo ENOTFOUND pumpportal.fun"}
+[2026-04-23 17:34:26] error: [GRD] PumpPortal WS error {"error":"getaddrinfo ENOTFOUND pumpportal.fun"}
+[2026-04-26 15:52:26] error: [GrokAgent] Batch call failed {"error":"read ECONNRESET"}
+[2026-04-27 07:17:36] error: [GRD] PumpPortal WS error {"error":"WebSocket was closed before the connection was established"}
