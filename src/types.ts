@@ -46,11 +46,14 @@ export interface AgentDecision {
   narrative: string;
   kolSpotted: boolean;
   kolNames: string[];
+  kolRecent: boolean;       // KOL activity found within last 48 hours
   sentiment: 'moon' | 'hype' | 'neutral' | 'sus' | 'rug' | 'dead';
   velocity: 'exploding' | 'rising' | 'flat' | 'dead';
   redFlags: string[];
   crossPlatform: boolean;
   vibeScore: number;
+  narrativeOriginality: number; // 0-10: how original vs generic clone/pun mashup
+  isDerivativePun: boolean;     // true = pun mashup of two existing memes (e.g. BEETRUMP)
   oneLiner: string;
   rawMentionCount: number;
   dataFetched: string[];

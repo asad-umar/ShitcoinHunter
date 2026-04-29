@@ -1,4 +1,6 @@
 node_modules
+dist/
+data/
 
 # ── Secret keys — NEVER commit these ─────────────────────────────────────────
 .env

@@ -89,7 +89,7 @@ class ShitcoinHunter {
   private grokProcessing = false;
   private readonly GROK_QUEUE_MAX     = 30;     // drop oldest if backlog exceeds this
   private readonly GROK_STALE_MS      = 90_000; // discard tokens queued > 90s ago
-  private readonly GROK_BATCH_MAX     = 10;     // max tokens per single Grok call
+  private readonly GROK_BATCH_MAX     = 3;      // max tokens per single Grok call
 
   // ── Stats ─────────────────────────────────────────────
   private filterStats = { seen: 0, hardFail: 0, heuristicFail: 0, grokCalls: 0 };
@@ -651,8 +651,11 @@ class ShitcoinHunter {
         const botAction =
           decision.action === 'BUY' && decision.scamConfidencePercent >= config.trading.maxScamConfidencePercent ? 'blocked_scam' :
           decision.action === 'BUY' && decision.vibeScore < this.memory.vibeThreshold                            ? 'blocked_score' :
-          decision.action === 'BUY'                                                                              ? 'bought' :
-          decision.action === 'WATCHLIST'                                                                        ? 'watchlisted' : 'skipped';
+          decision.action === 'BUY' && decision.confidencePercent < this.memory.confidenceThreshold              ? 'blocked_confidence' :
+          decision.action === 'BUY' && decision.isDerivativePun                                                  ? 'blocked_pun' :
+          decision.action === 'BUY' && decision.narrativeOriginality < 7                                         ? 'blocked_originality' :
+          decision.action === 'BUY'                                                                               ? 'bought' :
+          decision.action === 'WATCHLIST'                                                                         ? 'watchlisted' : 'skipped';
 
         appendEvaluation({
           evaluatedAt: new Date().toISOString(),

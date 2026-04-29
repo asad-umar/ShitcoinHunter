@@ -160,7 +160,9 @@ export class TradeMemory {
   applyReflectionRecommendation(thresholdDelta: number, mode: MemoryState['strategyMode'], date: string): void {
     const old = { threshold: this.state.currentVibeThreshold, mode: this.state.strategyMode };
 
-    this.state.currentVibeThreshold = Math.min(10, Math.max(5, this.state.currentVibeThreshold + thresholdDelta));
+    // Cap at ±1 per day to prevent wild oscillation from single-day noise
+    const clampedDelta = Math.max(-1, Math.min(1, thresholdDelta));
+    this.state.currentVibeThreshold = Math.min(10, Math.max(5, this.state.currentVibeThreshold + clampedDelta));
     this.state.strategyMode = mode;
     this.state.lastReflectionDate = date;
 
