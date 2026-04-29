@@ -49,21 +49,28 @@ async function fetchCurrentMcap(mint: string): Promise<number | null> {
 async function fetchOutcomes(records: EvaluationRecord[]): Promise<Map<string, EvaluationRecord['outcome']>> {
   const map = new Map<string, EvaluationRecord['outcome']>();
   const now = new Date().toISOString();
+  const CONCURRENCY = 10;
 
-  for (const rec of records) {
-    if (rec.mcapUsd <= 0) continue;
-    const currentMcap = await fetchCurrentMcap(rec.mint);
-    if (currentMcap === null) {
-      map.set(rec.mint, { checkedAt: now, currentMcap: 0, multiplier: 0, classification: 'unknown' });
-      continue;
-    }
-    const multiplier     = currentMcap / rec.mcapUsd;
-    const classification = multiplier >= RUNNER_MULTIPLIER ? 'runner'
-      : multiplier <= RUG_MULTIPLIER ? 'rug'
-      : 'flat';
+  // Process in parallel batches to avoid sequential 5s-per-token delays
+  for (let i = 0; i < records.length; i += CONCURRENCY) {
+    const batch = records.slice(i, i + CONCURRENCY).filter(r => r.mcapUsd > 0);
+    await Promise.all(batch.map(async (rec) => {
+      const currentMcap = await fetchCurrentMcap(rec.mint);
+      if (currentMcap === null) {
+        map.set(rec.mint, { checkedAt: now, currentMcap: 0, multiplier: 0, classification: 'unknown' });
+        return;
+      }
+      const multiplier     = currentMcap / rec.mcapUsd;
+      const classification = multiplier >= RUNNER_MULTIPLIER ? 'runner'
+        : multiplier <= RUG_MULTIPLIER ? 'rug'
+        : multiplier > 1.0 ? 'gained'
+        : 'flat';
 
-    map.set(rec.mint, { checkedAt: now, currentMcap, multiplier, classification });
+      map.set(rec.mint, { checkedAt: now, currentMcap, multiplier, classification });
+    }));
   }
+
+  logger.info(`[Retro] Fetched outcomes for ${map.size}/${records.length} tokens`);
   return map;
 }
 
@@ -162,26 +169,42 @@ function buildTelegramReport(
 
   if (missed.length > 0) {
     lines.push(`🚀 <b>Missed Runners</b> (skipped, then pumped ${RUNNER_MULTIPLIER}x+):`);
-    for (const r of missed) {
-      const m = r.outcome?.multiplier.toFixed(1) ?? '?';
-      lines.push(`  $${r.ticker} → ${m}x | vibe:${r.vibeScore} scam:${r.scamPct}% | mcap:$${r.mcapUsd.toFixed(0)} vol:$${r.volUsd.toFixed(0)}`);
-      lines.push(`  <i>"${r.oneLiner}"</i>`);
+    const sortedMissed = [...missed].sort((a, b) => (b.outcome?.currentMcap ?? 0) - (a.outcome?.currentMcap ?? 0));
+    for (const r of sortedMissed) {
+      const multiplier = r.outcome?.multiplier.toFixed(1) ?? '?';
+      const mcapThen   = `$${r.mcapUsd.toFixed(0)}`;
+      const mcapNow    = r.outcome?.currentMcap ? `$${r.outcome.currentMcap.toFixed(0)}` : '?';
+      lines.push(`  $${r.ticker} <code>${r.mint}</code> → ${multiplier}x | identified: ${mcapThen} mcap → now: ${mcapNow} mcap`);
+      lines.push(`  vibe:${r.vibeScore} scam:${r.scamPct}% | <i>"${r.oneLiner}"</i>`);
+    }
+    lines.push('');
+  }
+
+  const gainedOnly = records.filter(r => r.grokAction !== 'BUY' && r.outcome?.classification === 'gained');
+  if (gainedOnly.length > 0) {
+    lines.push(`📈 <b>Missed Gains</b> (skipped, went up but under ${RUNNER_MULTIPLIER}x):`);
+    const sortedGained = [...gainedOnly].sort((a, b) => (b.outcome?.currentMcap ?? 0) - (a.outcome?.currentMcap ?? 0));
+    for (const r of sortedGained) {
+      const multiplier = r.outcome?.multiplier.toFixed(2) ?? '?';
+      const mcapThen   = `$${r.mcapUsd.toFixed(0)}`;
+      const mcapNow    = r.outcome?.currentMcap ? `$${r.outcome.currentMcap.toFixed(0)}` : '?';
+      lines.push(`  $${r.ticker} <code>${r.mint}</code> → ${multiplier}x | identified: ${mcapThen} → now: ${mcapNow}`);
     }
     lines.push('');
   }
 
   if (runners.length > 0) {
     lines.push(`✅ <b>Bought Runners:</b>`);
-    for (const r of runners) {
-      lines.push(`  $${r.ticker} → ${r.outcome?.multiplier.toFixed(1)}x`);
+    for (const r of [...runners].sort((a, b) => (b.outcome?.currentMcap ?? 0) - (a.outcome?.currentMcap ?? 0))) {
+      lines.push(`  $${r.ticker} <code>${r.mint}</code> → ${r.outcome?.multiplier.toFixed(1)}x`);
     }
     lines.push('');
   }
 
   if (rugs.length > 0) {
     lines.push(`💀 <b>Bought Rugs:</b>`);
-    for (const r of rugs) {
-      lines.push(`  $${r.ticker} → ${r.outcome?.multiplier.toFixed(2)}x`);
+    for (const r of [...rugs].sort((a, b) => (b.outcome?.currentMcap ?? 0) - (a.outcome?.currentMcap ?? 0))) {
+      lines.push(`  $${r.ticker} <code>${r.mint}</code> → ${r.outcome?.multiplier.toFixed(2)}x`);
     }
     lines.push('');
   }

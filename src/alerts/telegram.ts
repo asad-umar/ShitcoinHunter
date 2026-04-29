@@ -313,7 +313,7 @@ export class TelegramAlerter {
     bot:    TelegramBot,
     chatId: string,
     chunk:  string,
-    maxAttempts = 3,
+    maxAttempts = 5,
   ): Promise<void> {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -326,15 +326,17 @@ export class TelegramAlerter {
         const isTransient = err.message?.includes('ECONNRESET')
           || err.message?.includes('ETIMEDOUT')
           || err.message?.includes('ENOTFOUND')
+          || err.message?.includes('EFATAL')
+          || err.message?.includes('AggregateError')
           || err.code === 'EFATAL';
 
         if (isTransient && attempt < maxAttempts) {
-          const delayMs = attempt * 1_000;
+          const delayMs = attempt * 2_000;
           logger.warn(`[Telegram] Transient error (attempt ${attempt}/${maxAttempts}), retrying in ${delayMs}ms — ${err.message}`);
           await new Promise((r) => setTimeout(r, delayMs));
         } else {
-          logger.error('Telegram send failed', { error: err.message });
-          return;
+          logger.error(`Telegram unreachable after ${maxAttempts} attempts — shutting down`, { error: err.message });
+          process.exit(1);
         }
       }
     }

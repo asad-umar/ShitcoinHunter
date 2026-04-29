@@ -28,7 +28,7 @@ export interface EvaluationRecord {
     checkedAt:      string;
     currentMcap:    number;
     multiplier:     number;    // currentMcap / mcapUsd at eval time
-    classification: 'runner' | 'rug' | 'flat' | 'unknown';
+    classification: 'runner' | 'rug' | 'flat' | 'gained' | 'unknown';
   };
 }
 
