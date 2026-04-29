@@ -36,8 +36,8 @@ export class GrokAgent {
     if (items.length === 0) return [];
 
     const prompt = this.buildBatchPrompt(items);
-    // Allow ~400 tokens per decision (more room with full descriptions and 3-token batches)
-    const maxTokens = Math.min(4000, items.length * 400 + 100);
+    // Allow ~500 tokens per decision (full descriptions + detailed skip reasoning)
+    const maxTokens = Math.min(4000, items.length * 500 + 100);
 
     try {
       const raw = await this.callGrok(prompt, maxTokens);
@@ -75,7 +75,10 @@ export class GrokAgent {
       `"velocity":"exploding"|"rising"|"flat"|"dead","red_flags":[],` +
       `"cross_platform":bool,"vibe_score":0-10,` +
       `"narrative_originality":0-10,"is_derivative_pun":bool,` +
-      `"one_liner":"<15 words","raw_mention_count":0,"reasoning":"<30 words"}`;
+      `"one_liner":"<15 words","raw_mention_count":0,` +
+      `"reasoning":"2-4 sentences — for SKIP/WATCHLIST must state: (1) what you searched for, ` +
+      `(2) what you actually found or didn't find in last 48h, ` +
+      `(3) the specific reason this meta fails right now"}`;
 
     const prompt =
       `You are evaluating ${items.length} freshly graduated Solana pump.fun memecoin(s). ` +
@@ -122,6 +125,12 @@ export class GrokAgent {
       `Being new or unverified is NOT a scam signal.\n\n` +
       `BUY only if: scam_confidence_percent<15 AND vibe_score>=${this.memory.vibeThreshold} ` +
       `AND narrative_originality>=7 AND is_derivative_pun===false.\n\n` +
+      `REASONING REQUIREMENTS:\n` +
+      `For every SKIP or WATCHLIST decision, reasoning must be specific and evidence-based — not generic. BAD: "meta not trending". ` +
+      `GOOD: "Searched 'doge bee' on X — last relevant CT post was 3 weeks ago by @user, zero engagement since. ` +
+      `No TikTok presence. Pure pun mashup of doge + bee with no original angle, 4th such token this week."\n` +
+      `For BUY decisions, state what active signal you found and when (e.g. "Ansem posted about X yesterday, 2k likes, ` +
+      `3 other KOLs retweeted today — meta is live right now").\n\n` +
       `Return a JSON array with exactly ${items.length} objects in the same order as the tokens above:\n` +
       `[${schemaObj},...]\n` +
       `JSON only, no other text.`;

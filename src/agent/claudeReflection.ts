@@ -43,7 +43,8 @@ export class ClaudeReflection {
 
     logger.info(`[Reflection] Running Claude Opus reflection for ${date} (${todayTrades.length} trades)...`);
 
-    const prompt = this.buildReflectionPrompt(todayTrades, allTrades, currentState, date);
+    const pastReflections = this.loadPastReflections(date, 3);
+    const prompt = this.buildReflectionPrompt(todayTrades, allTrades, currentState, date, pastReflections);
 
     try {
       const message = await this.client.messages.create({
@@ -70,6 +71,27 @@ Respond ONLY with valid JSON. No markdown, no preamble.`,
     }
   }
 
+  private loadPastReflections(today: string, count: number): DailyReflection[] {
+    const dir = config.memory.reflectionFilePath;
+    if (!fs.existsSync(dir)) return [];
+
+    try {
+      const files = fs.readdirSync(dir)
+        .filter((f) => f.endsWith('.json') && f.replace('.json', '') < today)
+        .sort()
+        .reverse()
+        .slice(0, count);
+
+      return files.map((f) => {
+        const raw = fs.readFileSync(path.join(dir, f), 'utf-8');
+        return JSON.parse(raw) as DailyReflection;
+      });
+    } catch (err: any) {
+      logger.warn('[Reflection] Could not load past reflections', { error: err.message });
+      return [];
+    }
+  }
+
   private buildReflectionPrompt(
     today: TradeRecord[],
     all: TradeRecord[],
@@ -81,6 +103,7 @@ Respond ONLY with valid JSON. No markdown, no preamble.`,
       totalPnlUsd: number;
     },
     date: string,
+    pastReflections: DailyReflection[] = [],
   ): string {
     const todayWins = today.filter((t) => t.pnlUsd > 0);
     const todayLosses = today.filter((t) => t.pnlUsd <= 0);
@@ -96,7 +119,20 @@ Respond ONLY with valid JSON. No markdown, no preamble.`,
       ? todayLosses.reduce((s, t) => s + t.vibeScoreAtEntry, 0) / todayLosses.length
       : 0;
 
-    return `Analyze the trading bot's performance for ${date}.
+    const pastSection = pastReflections.length > 0
+      ? `PREVIOUS REFLECTIONS (most recent first — use these to track whether your recommendations are working and avoid contradicting yourself without reason):
+${pastReflections.map((r) => `
+--- ${r.date} ---
+Assessment: ${r.strategyAssessment}
+Patterns: ${r.patternInsights}
+Recommended: threshold ${r.recommendedThresholdChange > 0 ? '+' : ''}${r.recommendedThresholdChange}, mode → ${r.recommendedStrategyMode}
+Key learnings: ${r.keyLearnings.join(' | ')}
+Tomorrow focus: ${r.tomorrowFocus}`).join('\n')}
+
+`
+      : '';
+
+    return `${pastSection}Analyze the trading bot's performance for ${date}.
 
 TODAY'S TRADES (${today.length} total):
 ${today.map((t) => `  $${t.ticker}: entry $${t.entryPriceUsd.toFixed(6)}, exit $${t.exitPriceUsd.toFixed(6)}, PnL ${t.pnlPercent > 0 ? '+' : ''}${t.pnlPercent.toFixed(1)}% ($${t.pnlUsd.toFixed(2)})
