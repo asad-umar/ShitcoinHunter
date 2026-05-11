@@ -40,6 +40,9 @@ import { auditCreator, CreatorRisk } from './scanner/creatorAudit';
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 });
 
+const VERSION = '1.1.0';
+const VERSION_DATE = '2026-05-11';
+
 class ShitcoinHunter {
   // ── Mode resolution ───────────────────────────────────
   private readonly modes = resolveModes();
@@ -149,7 +152,7 @@ class ShitcoinHunter {
 
   // ── Startup ───────────────────────────────────────────
   async start(): Promise<void> {
-    logger.info('=== Solana Shitcoin Hunter V4 ===');
+    logger.info(`=== Solana Shitcoin Hunter v${VERSION} (${VERSION_DATE}) ===`);
     logger.info(`Scanner: ${this.modes.scanner.toUpperCase()} | Execution: ${this.modes.execution.toUpperCase()}`);
     logger.info(`Strategy: ${this.memory.strategyMode} | Vibe threshold: ${this.memory.vibeThreshold}/10`);
     logger.info(`Limits: buy $${config.trading.maxBuyUsd} | TP $${config.trading.takeProfitUsd} | SL $${config.trading.stopLossUsd}`);
