@@ -76,16 +76,18 @@ export class OnChainFetcher {
 
       return {
         mintAddress,
-        liquidityUsd: pair.liquidity?.usd ?? 0,
-        volumeUsd24h: pair.volume?.h24 ?? 0,
-        holderCount: pair.txns?.h24?.buys ?? 0, // rough proxy
-        priceUsd: parseFloat(pair.priceUsd ?? '0'),
-        marketCapUsd: pair.marketCap ?? 0,
-        lpLocked: false, // DexScreener doesn't expose this directly — check separately
-        devHoldingPercent: 0, // would need Helius or Birdeye for this
+        liquidityUsd:    pair.liquidity?.usd ?? 0,
+        volumeUsd24h:    pair.volume?.h24 ?? 0,
+        holderCount:     pair.txns?.h24?.buys ?? 0,
+        txnsBuys:        pair.txns?.h24?.buys  ?? undefined,
+        txnsSells:       pair.txns?.h24?.sells ?? undefined,
+        priceUsd:        parseFloat(pair.priceUsd ?? '0'),
+        marketCapUsd:    pair.marketCap ?? 0,
+        lpLocked:        false,
+        devHoldingPercent: 0,
         ageMinutes,
         lastTradeMinutesAgo: parseLastTradeMinutesAgo(pair),
-        dexscreenerUrl: pair.url ?? `https://dexscreener.com/solana/${mintAddress}`,
+        dexscreenerUrl:  pair.url ?? `https://dexscreener.com/solana/${mintAddress}`,
       };
     } catch {
       return null;

@@ -18,6 +18,8 @@ export interface TokenOnChainData {
   liquidityUsd: number;
   volumeUsd24h: number;
   holderCount: number;
+  txnsBuys?: number;   // 24h buy transaction count (from DexScreener txns.h24.buys)
+  txnsSells?: number;  // 24h sell transaction count (from DexScreener txns.h24.sells)
   priceUsd: number;
   marketCapUsd: number;
   lpLocked: boolean;

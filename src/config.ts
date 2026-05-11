@@ -32,10 +32,12 @@ export const config = {
     sonnetModel: 'claude-sonnet-4-5-20251022', // used for intra-day decisions
   },
   telegram: {
-    botToken: required('TELEGRAM_BOT_TOKEN'),
-    chatId: required('TELEGRAM_CHAT_ID'),
-    alertBotToken: optionalMaybe('TELEGRAM_ALERT_BOT_TOKEN'),
-    alertChatId: optionalMaybe('TELEGRAM_ALERT_CHAT_ID'),
+    botToken:      required('TELEGRAM_BOT_TOKEN'),
+    chatId:        required('TELEGRAM_CHAT_ID'),
+    gradBotToken:  optionalMaybe('TELEGRAM_GRAD_BOT_TOKEN'),
+    gradChatId:    optionalMaybe('TELEGRAM_GRAD_CHAT_ID'),
+    candBotToken:  optionalMaybe('TELEGRAM_CAND_BOT_TOKEN'),
+    candChatId:    optionalMaybe('TELEGRAM_CAND_CHAT_ID'),
   },
   trading: {
     // USD-denominated limits (items 2 & 3)

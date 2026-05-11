@@ -30,10 +30,11 @@ import { WatchList }           from './monitor/watchlist';
 import { TradeMemory }         from './memory/tradeMemory';
 import { config, wsProvider, pfThresholds, grdThresholds } from './config';
 import { logger }              from './logger';
-import { NewToken, TokenOnChainData, ScoredToken } from './types';
+import { NewToken, TokenOnChainData, ScoredToken, AgentDecision } from './types';
 import { OnChainFetcher } from './scanner/onchain';
 import { appendEvaluation } from './database/evaluationLog';
 import { runDailyRetro }    from './analysis/retroAnalyzer';
+import { auditCreator, CreatorRisk } from './scanner/creatorAudit';
 
 ['logs', 'data', 'data/reflections'].forEach((d) => {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
@@ -78,9 +79,9 @@ class ShitcoinHunter {
     evaluationRuns:  number;
   }> = [];
   private matureQueueMints = new Set<string>();
-  private readonly MATURATION_MINUTES         = parseFloat(process.env.MATURATION_MINUTES          ?? '5');  // PF: min age before evaluation
+  private readonly MATURATION_MINUTES         = parseFloat(process.env.MATURATION_MINUTES          ?? '2.5');  // PF: min age before evaluation
   private readonly MATURE_PROCESS_MINUTES     = parseFloat(process.env.MATURE_PROCESS_MINUTES      ?? '5');  // PF: how often the queue processor runs
-  private readonly GRD_QUEUE_INTERVAL_MINUTES = parseInt  (process.env.GRD_QUEUE_INTERVAL_MINUTES  ?? '5');  // GRD: evaluation interval (also min age)
+  private readonly GRD_QUEUE_INTERVAL_MINUTES = parseFloat(process.env.GRD_QUEUE_INTERVAL_MINUTES  ?? '2.5');  // GRD: evaluation interval (also min age)
   private readonly MATURE_QUEUE_CAP           = 200;   // drop oldest if queue exceeds this
 
   // ── Grok queue ────────────────────────────────────────
@@ -88,8 +89,22 @@ class ShitcoinHunter {
   private grokQueueMints = new Set<string>();   // deduplication
   private grokProcessing = false;
   private readonly GROK_QUEUE_MAX     = 30;     // drop oldest if backlog exceeds this
-  private readonly GROK_STALE_MS      = 90_000; // discard tokens queued > 90s ago
+  private readonly GROK_STALE_MS      = 10 * 60_000; // discard tokens queued > 10 min ago
   private readonly GROK_BATCH_MAX     = 3;      // max tokens per single Grok call
+
+  // ── Grok retry queue — Graduates that weren't bought, re-eval every 5 min ──
+  private grokRetryQueue: Array<{
+    token:    NewToken;
+    onChain:  TokenOnChainData;
+    retryAt:  number;
+    retries:  number;
+  }> = [];
+  private grokRetryMints             = new Set<string>();
+  private readonly GROK_RETRY_MS     = 5 * 60_000;  // re-evaluate every 5 min
+  private readonly GROK_RETRY_MAX    = 6;            // give up after 30 min total
+  private readonly GROK_GRADUATE_MIN  = 6;   // vibe threshold for Graduate status
+  private readonly VOL_BOOST_PER_UNIT = 250_000; // volume per boost unit ($250K)
+  private readonly VOL_BOOST_RATE     = 50_000;  // $50K/min = normalised rate (250K / 5min)
 
   // ── Stats ─────────────────────────────────────────────
   private filterStats = { seen: 0, hardFail: 0, heuristicFail: 0, grokCalls: 0 };
@@ -161,7 +176,10 @@ class ShitcoinHunter {
     setInterval(() => this.processMatureQueue(), matureInterval * 60_000);
 
     // Grok queue processor
-    setInterval(() => this.processGrokQueue(), 3_000);
+    setInterval(() => this.processGrokQueue(), 3 * 60_000);
+
+    // Grok retry queue — re-evaluates Graduate tokens that weren't bought
+    setInterval(() => this.processGrokRetryQueue(), 5 * 60_000);
 
     // Cycle summary flush — one Telegram message every 30s summarising rejections
     setInterval(() => this.flushCycleSummary(), 5 * 60_000);
@@ -633,13 +651,27 @@ class ShitcoinHunter {
         batch.map((i) => `$${i.token.ticker}`).join(', ')
       );
 
+      // Fetch creator history in parallel — gives Grok real scam signal for new tokens
+      const creatorRisks = await Promise.all(
+        batch.map((item) => auditCreator(item.token.creatorWallet))
+      );
+      for (let i = 0; i < batch.length; i++) {
+        const cr = creatorRisks[i];
+        if (cr) {
+          logger.info(`[CreatorAudit] $${batch[i].token.ticker}: ${cr.summary}`);
+        }
+      }
+
       const decisions = await this.grokAgent.evaluateBatch(
-        batch.map((item) => ({ token: item.token, onChain: item.onChain }))
+        batch.map((item, i) => ({ token: item.token, onChain: item.onChain, creatorRisk: creatorRisks[i] }))
       );
 
       for (let i = 0; i < batch.length; i++) {
         const item     = batch[i];
         const decision = decisions[i];
+
+        // Volume/momentum boost: buy-dominated volume scaled by token age
+        this.applyVolumeBoost(decision, item.onChain);
 
         logger.info(
           `[Eval] $${item.token.ticker} → Grok: ${decision.action}` +
@@ -647,6 +679,7 @@ class ShitcoinHunter {
           ` | "${decision.reasoning}"`
         );
         void this.alerter.sendGrokResultAlert(item.token, item.onChain, decision);
+        void this.alerter.sendGrokCandidateAlert(item.token, item.onChain, decision);
 
         const botAction =
           decision.action === 'BUY' && decision.scamConfidencePercent >= config.trading.maxScamConfidencePercent ? 'blocked_scam' :
@@ -693,7 +726,7 @@ class ShitcoinHunter {
   }
 
   // ── Decision routing ──────────────────────────────────
-  private async handleDecision(scored: ScoredToken, investigateCount = 0): Promise<void> {
+  private async handleDecision(scored: ScoredToken, investigateCount = 0, retryCount = 0): Promise<void> {
     const { vibe, token } = scored;
 
     if (this.memory.strategyMode === 'paused') {
@@ -701,10 +734,31 @@ class ShitcoinHunter {
       return;
     }
 
+    const isGraduate = vibe.vibeScore >= this.GROK_GRADUATE_MIN;
+
+    // Graduate: send alert and go straight to buy — no retry regardless of outcome
+    if (isGraduate) {
+      void this.alerter.sendGrokGraduateAlert(scored);
+
+      if (vibe.scamConfidencePercent > config.trading.maxScamConfidencePercent) {
+        logger.info(`[Decision] Graduate BUY blocked — scam ${vibe.scamConfidencePercent}% for $${token.ticker}`);
+        return;
+      }
+      if (vibe.action === 'BUY') {
+        logger.info(`[Decision] Graduate BUY $${token.ticker} — vibe ${vibe.vibeScore} confidence ${vibe.confidencePercent}%`);
+        await this.alerter.sendSignalAlert(scored);
+        await this.executeBuy(scored);
+      } else {
+        logger.info(`[Decision] Graduate not a BUY ($${token.ticker} — Grok said ${vibe.action}) — no retry`);
+      }
+      return;
+    }
+
+    // Candidate (vibe < GROK_GRADUATE_MIN): retry if not bought, scam is the only hard stop
     switch (vibe.action) {
       case 'BUY':
         if (vibe.scamConfidencePercent > config.trading.maxScamConfidencePercent) {
-          logger.info(`[Decision] BUY blocked — scam ${vibe.scamConfidencePercent}% for $${token.ticker}`);
+          logger.info(`[Decision] Candidate BUY blocked — scam ${vibe.scamConfidencePercent}% for $${token.ticker} — queuing retry`);
           this.cycleGrokSkips.push({
             ticker:    token.ticker,
             action:    'SCAM_BLOCK',
@@ -712,31 +766,28 @@ class ShitcoinHunter {
             scamPct:   vibe.scamConfidencePercent,
             oneLiner:  `Scam risk ${vibe.scamConfidencePercent}%`,
           });
-          return;
+          this.addToGrokRetry(scored, retryCount);
+          break;
         }
-        if (vibe.vibeScore < this.memory.vibeThreshold) {
-          logger.info(`[Decision] BUY blocked — score ${vibe.vibeScore} < ${this.memory.vibeThreshold} for $${token.ticker}`);
-          this.cycleGrokSkips.push({
-            ticker:    token.ticker,
-            action:    'LOW_SCORE',
-            vibeScore: vibe.vibeScore,
-            scamPct:   vibe.scamConfidencePercent,
-            oneLiner:  `Score ${vibe.vibeScore}/10 below threshold`,
-          });
-          return;
-        }
-        logger.info(`[Decision] BUY $${token.ticker} — confidence ${vibe.confidencePercent}%`);
-        await this.alerter.sendSignalAlert(scored);
-        await this.executeBuy(scored);
+        // Grok said BUY but vibe too low — retry, meta may improve
+        logger.info(`[Decision] Candidate BUY blocked — score ${vibe.vibeScore} < ${this.memory.vibeThreshold} for $${token.ticker} — queuing retry`);
+        this.cycleGrokSkips.push({
+          ticker:    token.ticker,
+          action:    'LOW_SCORE',
+          vibeScore: vibe.vibeScore,
+          scamPct:   vibe.scamConfidencePercent,
+          oneLiner:  `Score ${vibe.vibeScore}/10 below threshold`,
+        });
+        this.addToGrokRetry(scored, retryCount);
         break;
 
       case 'WATCHLIST':
-        logger.info(`[Decision] WATCHLIST $${token.ticker}`);
+        logger.info(`[Decision] Candidate WATCHLIST $${token.ticker} — queuing retry`);
         this.watchList.add(scored);
+        this.addToGrokRetry(scored, retryCount);
         break;
 
       case 'INVESTIGATE':
-        // Cap re-investigation at 2 attempts to prevent infinite loops
         if (investigateCount >= 2) {
           logger.info(`[Decision] INVESTIGATE cap reached for $${token.ticker} — treating as SKIP`);
           this.cycleGrokSkips.push({
@@ -754,7 +805,7 @@ class ShitcoinHunter {
 
       case 'SKIP':
       default:
-        logger.debug(`[Decision] SKIP $${token.ticker}`);
+        logger.debug(`[Decision] Candidate SKIP $${token.ticker} — queuing retry`);
         this.cycleGrokSkips.push({
           ticker:    token.ticker,
           action:    'SKIP',
@@ -762,6 +813,96 @@ class ShitcoinHunter {
           scamPct:   vibe.scamConfidencePercent,
           oneLiner:  vibe.oneLiner || 'No signal',
         });
+        this.addToGrokRetry(scored, retryCount);
+    }
+  }
+
+  // ── Buy-pressure volume boost ─────────────────────────
+  // For each 250K of volume normalised by age (250K per 5 min = 50K/min rate),
+  // if buys > sells: +1 vibe, -10 scam confidence. Capped at 5 boosts.
+  private applyVolumeBoost(decision: AgentDecision, onChain: TokenOnChainData): void {
+    const vol      = onChain.volumeUsd24h;
+    const ageMin   = Math.max(1, onChain.ageMinutes); // avoid division by zero
+    const buys     = onChain.txnsBuys  ?? 0;
+    const sells    = onChain.txnsSells ?? 0;
+    const buyDominated = buys > sells || (onChain.txnsBuys === undefined); // assume positive if no data
+
+    if (!buyDominated || vol <= 0) return;
+
+    // boostCount = floor(vol / (50K * ageMin)) → 250K at 5min = 1, 500K at 10min = 1, etc.
+    const boostCount = Math.min(5, Math.floor(vol / (this.VOL_BOOST_RATE * ageMin)));
+    if (boostCount <= 0) return;
+
+    const oldVibe = decision.vibeScore;
+    const oldScam = decision.scamConfidencePercent;
+    decision.vibeScore             = Math.min(10, decision.vibeScore + boostCount);
+    decision.scamConfidencePercent = Math.max(0, decision.scamConfidencePercent - boostCount * 10);
+
+    logger.info(
+      `[Boost] $${onChain.mintAddress} vol boost ×${boostCount}: ` +
+      `vibe ${oldVibe}→${decision.vibeScore} | scam ${oldScam}%→${decision.scamConfidencePercent}% ` +
+      `(vol $${vol.toFixed(0)}, age ${ageMin.toFixed(1)}m, buys ${buys} sells ${sells})`
+    );
+  }
+
+  // ── Add a Graduate to the Grok retry queue ────────────
+  private addToGrokRetry(scored: ScoredToken, currentRetries: number): void {
+    const mint = scored.token.mintAddress;
+    if (this.grokRetryMints.has(mint)) return;
+    if (currentRetries >= this.GROK_RETRY_MAX) {
+      logger.info(`[Retry] $${scored.token.ticker} hit max retries (${this.GROK_RETRY_MAX}) — removing`);
+      return;
+    }
+    this.grokRetryQueue.push({
+      token:   scored.token,
+      onChain: scored.onChain,
+      retryAt: Date.now() + this.GROK_RETRY_MS,
+      retries: currentRetries,
+    });
+    this.grokRetryMints.add(mint);
+    logger.info(`[Retry] $${scored.token.ticker} added to retry queue — vibe ${scored.vibe.vibeScore}, attempt ${currentRetries + 1}/${this.GROK_RETRY_MAX}`);
+  }
+
+  // ── Re-evaluate Graduate tokens that haven't been bought ──
+  private async processGrokRetryQueue(): Promise<void> {
+    const now = Date.now();
+    const due = this.grokRetryQueue.filter(item => item.retryAt <= now);
+    if (due.length === 0) return;
+
+    logger.info(`[Retry] ${due.length} Graduate token(s) due for re-evaluation`);
+
+    for (const item of due) {
+      this.grokRetryQueue = this.grokRetryQueue.filter(i => i.token.mintAddress !== item.token.mintAddress);
+      this.grokRetryMints.delete(item.token.mintAddress);
+
+      // Fetch fresh on-chain data
+      let onChain = item.onChain;
+      try {
+        if (this.modes.isPF) {
+          const fresh = await fetchPFTokenData(item.token.mintAddress);
+          if (fresh) onChain = fresh;
+        } else if (this.grdScanner) {
+          const result = await this.grdScanner.fetchRaydiumData(item.token.mintAddress);
+          if (result?.onChain) onChain = result.onChain;
+        }
+      } catch { /* use cached */ }
+
+      const creatorRisk = await auditCreator(item.token.creatorWallet);
+      if (creatorRisk) logger.info(`[CreatorAudit] $${item.token.ticker} (retry): ${creatorRisk.summary}`);
+      const [decision] = await this.grokAgent.evaluateBatch([{ token: item.token, onChain, creatorRisk }]);
+      this.applyVolumeBoost(decision, onChain);
+
+      logger.info(`[Retry] $${item.token.ticker} re-eval → vibe ${decision.vibeScore}/10 | ${decision.action}`);
+
+      const scored: ScoredToken = {
+        token:      item.token,
+        onChain,
+        vibe:       decision,
+        finalScore: decision.vibeScore,
+        scoredAt:   new Date(),
+      };
+
+      await this.handleDecision(scored, 0, item.retries + 1);
     }
   }
 

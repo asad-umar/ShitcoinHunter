@@ -14,10 +14,12 @@ import { NewToken, TokenOnChainData, AgentDecision } from '../types';
 import { config } from '../config';
 import { logger } from '../logger';
 import { TradeMemory } from '../memory/tradeMemory';
+import type { CreatorRisk } from '../scanner/creatorAudit';
 
 export interface BatchItem {
-  token:   NewToken;
-  onChain: TokenOnChainData;
+  token:       NewToken;
+  onChain:     TokenOnChainData;
+  creatorRisk: CreatorRisk | null;
 }
 
 export class GrokAgent {
@@ -56,13 +58,15 @@ export class GrokAgent {
       : 'none';
 
     const tokenList = items
-      .map(({ token, onChain }, i) => {
+      .map(({ token, onChain, creatorRisk }, i) => {
         const desc = token.description;
+        const creatorLine = creatorRisk ? creatorRisk.summary : 'Creator history: unknown';
         return (
           `${i + 1}. $${token.ticker} | Name: "${token.name}" | Mint: ${token.mintAddress}\n` +
           `   Description: "${desc}"\n` +
           `   Liq:$${onChain.liquidityUsd.toFixed(0)} MCap:$${onChain.marketCapUsd.toFixed(0)} ` +
-          `Age:${Math.round(onChain.ageMinutes)}m Buys:${onChain.holderCount}`
+          `Age:${Math.round(onChain.ageMinutes)}m Buys:${onChain.holderCount}\n` +
+          `   ${creatorLine}`
         );
       })
       .join('\n\n');
@@ -120,9 +124,18 @@ export class GrokAgent {
       `KOL NOTE: KOL backing is data, NOT a buy signal. kol_spotted records whether any KOL has EVER mentioned ` +
       `this meta. kol_recent records whether a KOL posted within the last 48 hours. ` +
       `Old KOL history provides zero edge — the market has already priced it in.\n\n` +
-      `scam_confidence_percent: pump.fun tokens are inherently speculative — only flag HIGH if you find ` +
-      `actual rug warnings, honeypot reports, or dev dump evidence for THIS contract. ` +
-      `Being new or unverified is NOT a scam signal.\n\n` +
+      `scam_confidence_percent: Use ALL available signals to rate scam risk:\n` +
+      `  CREATOR HISTORY (strongest signal for new tokens):\n` +
+      `    - rug rate ≥70% with 3+ prior tokens → +60 scam_confidence (serial rugger)\n` +
+      `    - rug rate 40-70% with 3+ prior tokens → +35 scam_confidence (repeat offender)\n` +
+      `    - creator has graduated tokens previously → -20 scam_confidence (credible)\n` +
+      `    - brand new wallet (0 prior tokens) → +10 scam_confidence (unknown history)\n` +
+      `    - recent burst: ≥3 tokens in last 7d → +15 scam_confidence (serial launcher)\n` +
+      `  X / SOCIAL SIGNALS:\n` +
+      `    - explicit rug warning, honeypot report, or dev dump evidence from credible accounts → +40\n` +
+      `    - no X results for mint address → neutral (expected for brand-new tokens)\n` +
+      `  BASELINE: pump.fun tokens are inherently speculative — being new or unverified is NOT itself a scam signal.\n` +
+      `  Cap scam_confidence_percent at 100. Floor at 0.\n\n` +
       `BUY only if: scam_confidence_percent<15 AND vibe_score>=${this.memory.vibeThreshold} ` +
       `AND narrative_originality>=7 AND is_derivative_pun===false.\n\n` +
       `REASONING REQUIREMENTS:\n` +

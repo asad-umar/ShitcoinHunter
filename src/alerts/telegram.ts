@@ -15,10 +15,12 @@ import { logger } from '../logger';
 import type { ScannerMode, ExecutionMode } from '../modes/modeManager';
 
 export class TelegramAlerter {
-  private bot:         TelegramBot;
-  private chatId:      string;
-  private alertBot?:   TelegramBot;
-  private alertChatId?: string;
+  private bot:       TelegramBot;
+  private chatId:    string;
+  private gradBot?:  TelegramBot;
+  private gradChatId?: string;
+  private candBot?:  TelegramBot;
+  private candChatId?: string;
   private scannerMode:   ScannerMode   = 'pf';
   private executionMode: ExecutionMode = 'paper';
 
@@ -26,9 +28,14 @@ export class TelegramAlerter {
     this.bot    = new TelegramBot(config.telegram.botToken, { polling: false });
     this.chatId = config.telegram.chatId;
 
-    if (config.telegram.alertBotToken && config.telegram.alertChatId) {
-      this.alertBot    = new TelegramBot(config.telegram.alertBotToken, { polling: false });
-      this.alertChatId = config.telegram.alertChatId;
+    if (config.telegram.gradBotToken && config.telegram.gradChatId) {
+      this.gradBot    = new TelegramBot(config.telegram.gradBotToken, { polling: false });
+      this.gradChatId = config.telegram.gradChatId;
+    }
+
+    if (config.telegram.candBotToken && config.telegram.candChatId) {
+      this.candBot    = new TelegramBot(config.telegram.candBotToken, { polling: false });
+      this.candChatId = config.telegram.candChatId;
     }
   }
 
@@ -93,7 +100,7 @@ export class TelegramAlerter {
       this.mintLine(token.mintAddress),
     ].join('\n');
 
-    await this.send(msg, this.alertBot, this.alertChatId);
+    await this.send(msg, this.gradBot, this.gradChatId);
   }
 
   // ── Buy alert ─────────────────────────────────────────
@@ -212,6 +219,64 @@ export class TelegramAlerter {
     ].join('\n');
 
     await this.send(msg);
+  }
+
+  // ── Grok Candidate — coin evaluated by Grok, result included ──
+  async sendGrokCandidateAlert(
+    token:    { ticker: string; name: string; mintAddress: string },
+    onChain:  { liquidityUsd: number; marketCapUsd: number; volumeUsd24h: number; holderCount: number; txnsBuys?: number; txnsSells?: number; ageMinutes: number },
+    decision: { action: string; vibeScore: number; scamConfidencePercent: number; oneLiner: string; reasoning: string; isDerivativePun: boolean; narrativeOriginality: number },
+  ): Promise<void> {
+    const actionEmoji = decision.action === 'BUY' ? '🟢' : decision.action === 'WATCHLIST' ? '👀' : '🔴';
+    const punFlag     = decision.isDerivativePun ? ' ⚠️ pun' : '';
+    const buysSells   = onChain.txnsBuys !== undefined && onChain.txnsSells !== undefined
+      ? ` | 🟢${onChain.txnsBuys} 🔴${onChain.txnsSells}`
+      : '';
+
+    const msg = [
+      `🔎 <b>GROK CANDIDATE</b> — $${token.ticker}`,
+      `<i>${this.modeTag()}</i>`,
+      '',
+      `${actionEmoji} <b>${decision.action}</b> | Vibe: ${decision.vibeScore}/10 | Orig: ${decision.narrativeOriginality}/10${punFlag}`,
+      `Scam: ${decision.scamConfidencePercent}%`,
+      `<i>"${decision.oneLiner}"</i>`,
+      `<i>${decision.reasoning}</i>`,
+      '',
+      `💰 MCap: $${onChain.marketCapUsd.toFixed(0)} | Liq: $${onChain.liquidityUsd.toFixed(0)}`,
+      `📈 Vol: $${onChain.volumeUsd24h.toFixed(0)} | Age: ${onChain.ageMinutes.toFixed(1)}m${buysSells}`,
+      '',
+      this.mintLine(token.mintAddress),
+    ].join('\n');
+    await this.send(msg, this.candBot, this.candChatId);
+  }
+
+  // ── Grok Graduate — vibe >= 6, regardless of buy decision ──
+  async sendGrokGraduateAlert(scored: ScoredToken): Promise<void> {
+    const { token, onChain, vibe } = scored;
+    const flags = vibe.redFlags.length > 0
+      ? `\n⚠️ <b>Red flags:</b> ${vibe.redFlags.join(', ')}`
+      : '\n✅ No red flags';
+    const kolLine = vibe.kolSpotted
+      ? `\n🎯 KOL: ${vibe.kolNames.length > 0 ? vibe.kolNames.join(', ') : 'spotted'}${vibe.kolRecent ? ' (recent)' : ' (old)'}`
+      : '';
+
+    const msg = [
+      `🎓 <b>GROK GRADUATE</b> — $${token.ticker}`,
+      `<i>${this.modeTag()}</i>`,
+      '',
+      `📊 <b>Vibe: ${vibe.vibeScore}/10</b> | Originality: ${vibe.narrativeOriginality}/10`,
+      `${this.sentimentEmoji(vibe.sentiment)} ${vibe.sentiment.toUpperCase()} | ⚡ ${vibe.velocity}`,
+      `💬 ~${vibe.rawMentionCount} mentions${kolLine}`,
+      '',
+      `📖 ${vibe.narrative}`,
+      `🧠 <i>${vibe.oneLiner}</i>${flags}`,
+      '',
+      `💰 MCap: $${onChain.marketCapUsd.toFixed(0)} | Liq: $${onChain.liquidityUsd.toFixed(0)} | Vol: $${onChain.volumeUsd24h.toFixed(0)}`,
+      '',
+      this.chartLink(scored),
+      this.mintLine(token.mintAddress),
+    ].join('\n');
+    await this.send(msg, this.gradBot, this.gradChatId);
   }
 
   // ── Sent to Grok ─────────────────────────────────────
