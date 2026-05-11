@@ -896,6 +896,7 @@ class ShitcoinHunter {
       this.applyVolumeBoost(decision, onChain);
 
       logger.info(`[Retry] $${item.token.ticker} re-eval → vibe ${decision.vibeScore}/10 | ${decision.action}`);
+      void this.alerter.sendGrokCandidateAlert(item.token, onChain, decision, item.retries + 1);
 
       const scored: ScoredToken = {
         token:      item.token,

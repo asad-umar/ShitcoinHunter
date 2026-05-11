@@ -226,15 +226,17 @@ export class TelegramAlerter {
     token:    { ticker: string; name: string; mintAddress: string },
     onChain:  { liquidityUsd: number; marketCapUsd: number; volumeUsd24h: number; holderCount: number; txnsBuys?: number; txnsSells?: number; ageMinutes: number },
     decision: { action: string; vibeScore: number; scamConfidencePercent: number; oneLiner: string; reasoning: string; isDerivativePun: boolean; narrativeOriginality: number },
+    retryAttempt?: number,
   ): Promise<void> {
     const actionEmoji = decision.action === 'BUY' ? '🟢' : decision.action === 'WATCHLIST' ? '👀' : '🔴';
     const punFlag     = decision.isDerivativePun ? ' ⚠️ pun' : '';
     const buysSells   = onChain.txnsBuys !== undefined && onChain.txnsSells !== undefined
       ? ` | 🟢${onChain.txnsBuys} 🔴${onChain.txnsSells}`
       : '';
+    const retryTag    = retryAttempt !== undefined ? ` <i>(retry ${retryAttempt})</i>` : '';
 
     const msg = [
-      `🔎 <b>GROK CANDIDATE</b> — $${token.ticker}`,
+      `🔎 <b>GROK CANDIDATE</b> — $${token.ticker}${retryTag}`,
       `<i>${this.modeTag()}</i>`,
       '',
       `${actionEmoji} <b>${decision.action}</b> | Vibe: ${decision.vibeScore}/10 | Orig: ${decision.narrativeOriginality}/10${punFlag}`,

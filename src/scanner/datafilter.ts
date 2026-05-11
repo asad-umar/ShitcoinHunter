@@ -73,7 +73,9 @@ export class DataFilter {
 
   // ── Stage 0: profanity — called immediately on token arrival ─────────────────
   evaluateName(token: NewToken): DataFilterResult {
-    const text = `${token.name} ${token.ticker} ${token.description}`;
+    // Skip ticker if it looks like a mint address (long base58 string with no spaces)
+    const ticker = token.ticker.length > 20 ? '' : token.ticker;
+    const text = `${token.name} ${ticker} ${token.description}`;
     const profanityMatch = PROFANITY_REGEX.exec(text);
     if (profanityMatch) {
       const word = profanityMatch[0].toLowerCase();
